@@ -5,15 +5,38 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-14
+    runs-on: macos-15
 
     steps:
 
+      # --------------------------------------------------
+      # 0. Select compatible Xcode
+      # --------------------------------------------------
+      - name: Select Xcode 16.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+
+      - name: Show Xcode version
+        shell: bash
+        run: |
+          set -e
+
+          echo "Xcode version:"
+          xcodebuild -version
+
+          echo ""
+          echo "Developer directory:"
+          xcode-select -p
+
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
       # --------------------------------------------------
-      # 1. Download official NOOP project configuration
+      # 2. Download official NOOP project configuration
       # --------------------------------------------------
       - name: Download official NOOP project.yml
         shell: bash
@@ -28,7 +51,7 @@ jobs:
           wc -l official-project.yml
 
       # --------------------------------------------------
-      # 2. Extract our customized source
+      # 3. Extract customized source
       # --------------------------------------------------
       - name: Extract customized source
         shell: bash
@@ -55,7 +78,7 @@ jobs:
           find noop-source -maxdepth 3 -type d | head -100
 
       # --------------------------------------------------
-      # 3. Locate actual NOOP source directory
+      # 4. Locate actual NOOP source directory
       # --------------------------------------------------
       - name: Locate NOOP source
         shell: bash
@@ -77,7 +100,7 @@ jobs:
           echo "$ROOT" > source-root.txt
 
       # --------------------------------------------------
-      # 4. Replace missing project configuration
+      # 5. Install official project.yml
       # --------------------------------------------------
       - name: Install official project.yml
         shell: bash
@@ -92,7 +115,7 @@ jobs:
           ls -lh "$ROOT/project.yml"
 
       # --------------------------------------------------
-      # 5. Install XcodeGen
+      # 6. Install XcodeGen
       # --------------------------------------------------
       - name: Install XcodeGen
         shell: bash
@@ -101,10 +124,12 @@ jobs:
 
           brew install xcodegen
 
+          echo ""
+          echo "XcodeGen version:"
           xcodegen --version
 
       # --------------------------------------------------
-      # 6. Generate Strand.xcodeproj
+      # 7. Generate Strand.xcodeproj
       # --------------------------------------------------
       - name: Generate Xcode project
         shell: bash
@@ -132,7 +157,7 @@ jobs:
           echo "project.pbxproj successfully generated."
 
       # --------------------------------------------------
-      # 7. Show available schemes
+      # 8. Check generated Xcode project
       # --------------------------------------------------
       - name: Check Xcode project
         shell: bash
@@ -143,12 +168,14 @@ jobs:
 
           cd "$ROOT"
 
+          echo "Checking Xcode project..."
+
           xcodebuild \
             -project Strand.xcodeproj \
             -list
 
       # --------------------------------------------------
-      # 8. Build unsigned iOS app
+      # 9. Build unsigned iOS app
       # --------------------------------------------------
       - name: Build NOOPiOS
         shell: bash
@@ -160,6 +187,8 @@ jobs:
           cd "$ROOT"
 
           rm -rf build
+
+          echo "Starting unsigned iOS build..."
 
           xcodebuild \
             -project Strand.xcodeproj \
@@ -175,7 +204,7 @@ jobs:
             build
 
       # --------------------------------------------------
-      # 9. Locate Runner.app / NOOP.app
+      # 10. Locate built iOS app
       # --------------------------------------------------
       - name: Locate built iOS app
         shell: bash
@@ -211,7 +240,7 @@ jobs:
           echo "$APP"
 
       # --------------------------------------------------
-      # 10. Create unsigned IPA
+      # 11. Create unsigned IPA
       # --------------------------------------------------
       - name: Create IPA
         shell: bash
@@ -242,7 +271,7 @@ jobs:
           ls -lh artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
 
       # --------------------------------------------------
-      # 11. Upload IPA
+      # 12. Upload IPA
       # --------------------------------------------------
       - name: Upload IPA
         uses: actions/upload-artifact@v4
@@ -252,7 +281,7 @@ jobs:
           if-no-files-found: error
 
       # --------------------------------------------------
-      # 12. Upload generated Xcode project for debugging
+      # 13. Upload generated Xcode project
       # --------------------------------------------------
       - name: Upload generated Xcode project
         uses: actions/upload-artifact@v4
