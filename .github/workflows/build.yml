@@ -1,4 +1,4 @@
-name: Inspect NOOP Xcode Project
+name: Check NOOP Project Format
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ jobs:
     runs-on: macos-14
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -19,80 +18,55 @@ jobs:
 
           ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
 
-          echo "ZIP:"
-          echo "$ZIP"
-
-          rm -rf noop-source
           mkdir -p noop-source
-
           unzip -q "$ZIP" -d noop-source
 
-      - name: Inspect Xcode files
+      - name: Check Xcode project format
         shell: bash
         run: |
           set -e
 
           echo "=========================================="
-          echo "XCODE PROJECTS"
-          echo "=========================================="
-
-          find noop-source \
-            \( -name "*.xcodeproj" -o \
-               -name "*.xcworkspace" -o \
-               -name "project.pbxproj" -o \
-               -name "*.xcconfig" \) \
-            -print
-
-          echo ""
-          echo "=========================================="
-          echo "ALL PBXPROJ FILES"
+          echo "XCODE PROJECT FILES"
           echo "=========================================="
 
           find noop-source \
             -type f \
-            -name "project.pbxproj" \
+            \( \
+              -name "project.pbxproj" \
+              -o -name "*.xcproj" \
+              -o -name "*.xcodeproj" \
+              -o -name "*.xcworkspace" \
+              -o -name "contents.xcworkspacedata" \
+              -o -name "Package.resolved" \
+            \) \
             -print
 
           echo ""
           echo "=========================================="
-          echo "XCODEPROJ CONTENT"
+          echo "STRAND.XCODEPROJ CONTENT"
           echo "=========================================="
 
-          find noop-source \
-            -type d \
-            -name "*.xcodeproj" | while read -r PROJECT; do
-
-            echo ""
-            echo "PROJECT: $PROJECT"
-
-            find "$PROJECT" \
-              -maxdepth 3 \
-              -print
-
-          done
+          find noop-source/noop-main/Strand.xcodeproj \
+            -maxdepth 4 \
+            -print
 
           echo ""
           echo "=========================================="
-          echo "WORKSPACE CONTENT"
+          echo "ALL XCProj FILES"
           echo "=========================================="
 
           find noop-source \
-            -type d \
-            -name "*.xcworkspace" | while read -r WORKSPACE; do
-
-            echo ""
-            echo "WORKSPACE: $WORKSPACE"
-
-            find "$WORKSPACE" \
-              -maxdepth 3 \
-              -print
-
-          done
+            -type f \
+            -name "*.xcproj" \
+            -print
 
           echo ""
           echo "=========================================="
-          echo "GIT FILES"
+          echo "ALL PROJECT JSON FILES"
           echo "=========================================="
 
-          find noop-source/.git \
-            -type f 2>/dev/null | head -100 || true
+          find noop-source \
+            -type f \
+            \( -name "*.json" -o -name "*.xcproj" \) \
+            | grep -Ei "project|strand|xcode" || true
