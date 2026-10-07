@@ -1,4 +1,4 @@
-name: Build NOOP WHOOP IPA
+name: Build NOOP iOS IPA
 
 on:
   workflow_dispatch:
@@ -9,16 +9,16 @@ jobs:
 
     steps:
 
-      # ==========================================
+      # ============================================
       # 1. Checkout repository
-      # ==========================================
+      # ============================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
-      # ==========================================
+      # ============================================
       # 2. Extract NOOP source ZIP
-      # ==========================================
+      # ============================================
       - name: Extract NOOP source
         shell: bash
         run: |
@@ -31,7 +31,7 @@ jobs:
             exit 1
           fi
 
-          echo "Using ZIP:"
+          echo "Using:"
           echo "$ZIP"
 
           mkdir -p noop-source
@@ -39,153 +39,150 @@ jobs:
           unzip -q "$ZIP" -d noop-source
 
           echo ""
-          echo "Extracted files:"
-          find noop-source -maxdepth 3 -type f | head -200
+          echo "Extracted:"
+          find noop-source -maxdepth 2 -type d | head -100
 
 
-      # ==========================================
-      # 3. Find actual Flutter project
-      # ==========================================
-      - name: Find Flutter project
+      # ============================================
+      # 3. Locate Xcode project
+      # ============================================
+      - name: Locate Xcode project
         id: project
         shell: bash
         run: |
           set -e
 
-          echo "Searching for pubspec.yaml..."
-
-          PUBSPEC=$(find noop-source \
-            -type f \
-            -name "pubspec.yaml" \
+          XCODEPROJ=$(find noop-source \
+            -type d \
+            -name "Strand.xcodeproj" \
             -print | head -n 1)
 
-          if [ -z "$PUBSPEC" ]; then
-            echo ""
-            echo "ERROR: pubspec.yaml NOT FOUND"
-            echo ""
-            echo "ZIP CONTENT:"
-            find noop-source -maxdepth 5 -print | head -500
+          if [ -z "$XCODEPROJ" ]; then
+            echo "ERROR: Strand.xcodeproj not found"
+            find noop-source -maxdepth 4 -print | head -300
             exit 1
           fi
 
-          PROJECT_ROOT=$(dirname "$PUBSPEC")
+          PROJECT_ROOT=$(dirname "$XCODEPROJ")
           PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd)
 
           echo ""
           echo "======================================"
-          echo "Flutter project found:"
-          echo "$PROJECT_ROOT"
+          echo "NOOP PROJECT"
           echo "======================================"
+          echo "$PROJECT_ROOT"
 
           echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
 
-      # ==========================================
-      # 4. Setup Flutter
-      # ==========================================
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.41.6"
-          channel: stable
-          cache: true
+      # ============================================
+      # 4. Xcode information
+      # ============================================
+      - name: Xcode information
+        run: |
+          xcodebuild -version
+          xcode-select -p
 
 
-      # ==========================================
-      # 5. Flutter Doctor
-      # ==========================================
-      - name: Flutter Doctor
-        run: flutter doctor -v
-
-
-      # ==========================================
-      # 6. Flutter Clean
-      # ==========================================
-      - name: Flutter Clean
+      # ============================================
+      # 5. List Xcode schemes
+      # ============================================
+      - name: Show Xcode schemes
         working-directory: ${{ steps.project.outputs.project_root }}
-        run: flutter clean
+        shell: bash
+        run: |
+          xcodebuild \
+            -project Strand.xcodeproj \
+            -list
 
 
-      # ==========================================
-      # 7. Flutter Pub Get
-      # ==========================================
-      - name: Flutter Pub Get
-        working-directory: ${{ steps.project.outputs.project_root }}
-        run: flutter pub get
-
-
-      # ==========================================
-      # 8. Disable Apple signing
-      # ==========================================
-      - name: Configure iOS signing
+      # ============================================
+      # 6. Disable signing
+      # ============================================
+      - name: Configure unsigned build
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          PBX="ios/Runner.xcodeproj/project.pbxproj"
+          PBX="Strand.xcodeproj/project.pbxproj"
 
-          if [ -f "$PBX" ]; then
+          echo "Disabling automatic signing..."
 
-            sed -i '' \
-              's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' \
-              "$PBX" || true
+          sed -i '' \
+            's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' \
+            "$PBX" || true
 
-            sed -i '' \
-              's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' \
-              "$PBX" || true
+          sed -i '' \
+            's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' \
+            "$PBX" || true
 
-            sed -i '' \
-              's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' \
-              "$PBX" || true
-
-          fi
-
-          mkdir -p ios/Flutter
-
-          cat > ios/Flutter/Signing.defaults.xcconfig <<'EOF'
-          CODE_SIGNING_ALLOWED = NO
-          CODE_SIGNING_REQUIRED = NO
-          CODE_SIGN_IDENTITY =
-          DEVELOPMENT_TEAM =
-          PROVISIONING_PROFILE_SPECIFIER =
-          EOF
+          sed -i '' \
+            's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' \
+            "$PBX" || true
 
 
-      # ==========================================
-      # 9. Build iOS
-      # ==========================================
-      - name: Build iOS
+      # ============================================
+      # 7. Resolve Swift Packages
+      # ============================================
+      - name: Resolve Swift packages
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          flutter build ios \
-            --release \
-            --no-codesign
+          xcodebuild \
+            -project Strand.xcodeproj \
+            -resolvePackageDependencies
 
 
-      # ==========================================
-      # 10. Find Runner.app
-      # ==========================================
-      - name: Locate Runner.app
-        id: locate
+      # ============================================
+      # 8. Build NOOP iOS app
+      # ============================================
+      - name: Build NOOP
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          APP=$(find build \
+          rm -rf build
+
+          xcodebuild \
+            -project Strand.xcodeproj \
+            -scheme Strand \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            build
+
+
+      # ============================================
+      # 9. Locate .app
+      # ============================================
+      - name: Locate NOOP.app
+        id: app
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
+        run: |
+          set -e
+
+          APP=$(find build/Build/Products \
             -type d \
-            -name "Runner.app" \
+            -name "*.app" \
+            -path "*iphoneos*" \
             -print | head -n 1)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: Runner.app not found"
+            echo "ERROR: iOS .app not found"
 
             echo ""
-            echo "BUILD DIRECTORY:"
+            echo "Build output:"
             find build -maxdepth 7 -type d | head -500
 
             exit 1
@@ -193,28 +190,31 @@ jobs:
 
           echo ""
           echo "======================================"
-          echo "Runner.app found:"
-          echo "$APP"
+          echo "APP FOUND"
           echo "======================================"
+          echo "$APP"
 
           echo "app_path=$APP" >> "$GITHUB_OUTPUT"
 
 
-      # ==========================================
-      # 11. Check Apple Watch
-      # ==========================================
+      # ============================================
+      # 10. Check Watch app
+      # ============================================
       - name: Check Apple Watch
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
+          set -e
 
-          APP="${{ steps.locate.outputs.app_path }}"
+          APP="${{ steps.app.outputs.app_path }}"
 
-          echo "Checking Watch..."
+          echo "======================================"
+          echo "CHECKING APPLE WATCH"
+          echo "======================================"
 
           if [ -d "$APP/Watch" ]; then
 
-            echo "WATCH APP FOUND"
+            echo "Watch directory FOUND"
 
             find "$APP/Watch" \
               -maxdepth 5 \
@@ -224,24 +224,24 @@ jobs:
 
           else
 
-            echo "WARNING: No embedded Watch app found."
+            echo "No Watch directory found."
 
           fi
 
 
-      # ==========================================
-      # 12. Sign Watch components
-      # ==========================================
+      # ============================================
+      # 11. Ad-hoc sign Watch components
+      # ============================================
       - name: Sign Watch components
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          APP="${{ steps.locate.outputs.app_path }}"
+          APP="${{ steps.app.outputs.app_path }}"
 
           if [ ! -d "$APP/Watch" ]; then
-            echo "No Watch directory."
+            echo "No Watch app - skipping."
             exit 0
           fi
 
@@ -264,6 +264,7 @@ jobs:
 
           done
 
+          echo ""
           echo "Signing Watch bundles..."
 
           find "$APP/Watch" \
@@ -283,37 +284,51 @@ jobs:
           done
 
 
-      # ==========================================
-      # 13. Sign main iOS app
-      # ==========================================
-      - name: Sign main iOS app
+      # ============================================
+      # 12. Sign embedded extensions
+      # ============================================
+      - name: Sign app extensions
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          APP="${{ steps.locate.outputs.app_path }}"
+          APP="${{ steps.app.outputs.app_path }}"
 
-          codesign \
-            --force \
-            --deep \
-            --sign - \
-            --timestamp=none \
-            "$APP" || true
+          if [ -d "$APP/PlugIns" ]; then
+
+            find "$APP/PlugIns" \
+              -type d \
+              -name "*.appex" | while read -r EXT; do
+
+              echo "Signing extension:"
+              echo "$EXT"
+
+              codesign \
+                --force \
+                --deep \
+                --sign - \
+                --timestamp=none \
+                "$EXT" || true
+
+            done
+
+          fi
 
 
-      # ==========================================
-      # 14. Verify app
-      # ==========================================
-      - name: Verify app
+      # ============================================
+      # 13. Verify bundle
+      # ============================================
+      - name: Verify NOOP bundle
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
+          set -e
 
-          APP="${{ steps.locate.outputs.app_path }}"
+          APP="${{ steps.app.outputs.app_path }}"
 
           echo "======================================"
-          echo "MAIN APP"
+          echo "APP INFO"
           echo "======================================"
 
           /usr/libexec/PlistBuddy \
@@ -322,44 +337,38 @@ jobs:
 
           echo ""
 
-          echo "======================================"
-          echo "WATCH"
-          echo "======================================"
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleShortVersionString" \
+            "$APP/Info.plist" || true
 
-          if [ -d "$APP/Watch" ]; then
+          echo ""
 
-            find "$APP/Watch" \
-              -maxdepth 5 \
-              -print
-
-          else
-
-            echo "No Watch bundle."
-
-          fi
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleVersion" \
+            "$APP/Info.plist" || true
 
 
-      # ==========================================
-      # 15. Create IPA
-      # ==========================================
+      # ============================================
+      # 14. Create IPA
+      # ============================================
       - name: Create IPA
         working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
 
-          APP="${{ steps.locate.outputs.app_path }}"
+          APP="${{ steps.app.outputs.app_path }}"
 
           rm -rf Payload
 
           mkdir -p Payload
 
-          cp -R "$APP" Payload/Runner.app
+          cp -R "$APP" Payload/NOOP.app
 
-          rm -f noop-whoop-health-unsigned.ipa
+          rm -f noop-unsigned.ipa
 
           zip -qry \
-            noop-whoop-health-unsigned.ipa \
+            noop-unsigned.ipa \
             Payload
 
           echo ""
@@ -367,15 +376,15 @@ jobs:
           echo "IPA CREATED"
           echo "======================================"
 
-          ls -lh noop-whoop-health-unsigned.ipa
+          ls -lh noop-unsigned.ipa
 
 
-      # ==========================================
-      # 16. Upload IPA
-      # ==========================================
+      # ============================================
+      # 15. Upload IPA
+      # ============================================
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: noop-whoop-health-unsigned-ipa
-          path: ${{ steps.project.outputs.project_root }}/noop-whoop-health-unsigned.ipa
+          name: noop-unsigned-ipa
+          path: ${{ steps.project.outputs.project_root }}/noop-unsigned.ipa
           if-no-files-found: error
