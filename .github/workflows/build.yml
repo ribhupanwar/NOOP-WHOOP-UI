@@ -1,4 +1,4 @@
-name: Build OpenStrap Edge IPA
+name: Build NOOP WHOOP IPA
 
 on:
   workflow_dispatch:
@@ -8,23 +8,57 @@ jobs:
     runs-on: macos-14
 
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Find Flutter project
+        id: project
+        shell: bash
+        run: |
+          set -e
+
+          echo "Searching for pubspec.yaml..."
+
+          PROJECT_ROOT=$(find . -name "pubspec.yaml" \
+            -not -path "./.git/*" \
+            -print | head -n 1)
+
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: pubspec.yaml not found!"
+            echo ""
+            echo "Repository structure:"
+            find . -maxdepth 4 -type f | head -300
+            exit 1
+          fi
+
+          PROJECT_ROOT=$(dirname "$PROJECT_ROOT")
+          PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd)
+
+          echo "Flutter project found:"
+          echo "$PROJECT_ROOT"
+
+          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.6'
+          flutter-version: "3.41.6"
           channel: stable
           cache: true
 
       - name: Flutter Doctor
         run: flutter doctor -v
 
-      - name: Get Dependencies
+      - name: Flutter Clean
+        working-directory: ${{ steps.project.outputs.project_root }}
+        run: flutter clean
+
+      - name: Flutter Pub Get
+        working-directory: ${{ steps.project.outputs.project_root }}
         run: flutter pub get
 
-      - name: Disable iOS Code Signing
+      - name: Configure iOS signing
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
@@ -48,13 +82,18 @@ jobs:
           EOF
 
       - name: Build iOS
+        working-directory: ${{ steps.project.outputs.project_root }}
+        shell: bash
         run: |
+          set -e
+
           flutter build ios \
             --release \
             --no-codesign
 
       - name: Locate Runner.app
         id: locate
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
@@ -62,30 +101,31 @@ jobs:
           APP=$(find build -type d -name "Runner.app" | head -n 1)
 
           if [ -z "$APP" ]; then
-            echo "Runner.app not found"
-            find build -maxdepth 5 -type d | head -200
+            echo "ERROR: Runner.app not found"
+            find build -maxdepth 6 -type d | head -300
             exit 1
           fi
 
-          echo "APP=$APP"
+          echo "Runner.app:"
+          echo "$APP"
+
           echo "app_path=$APP" >> "$GITHUB_OUTPUT"
 
-      - name: Check Apple Watch App
+      - name: Check Apple Watch
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
-          set -e
-
           APP="${{ steps.locate.outputs.app_path }}"
 
-          echo "Checking embedded Watch app..."
-
           if [ -d "$APP/Watch" ]; then
-            find "$APP/Watch" -maxdepth 3 -type d -name "*.app" -print
+            echo "WATCH APP FOUND"
+            find "$APP/Watch" -maxdepth 4 -type d -name "*.app" -print
           else
-            echo "WARNING: No Watch directory found."
+            echo "WARNING: No embedded Watch app found."
           fi
 
-      - name: Sign Embedded Watch Components
+      - name: Sign Watch components
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
@@ -93,15 +133,12 @@ jobs:
           APP="${{ steps.locate.outputs.app_path }}"
 
           if [ ! -d "$APP/Watch" ]; then
-            echo "No Watch app to sign."
+            echo "No Watch directory."
             exit 0
           fi
 
-          echo "Signing embedded Watch binaries..."
-
-          find "$APP/Watch" -type f -perm -111 | while read -r FILE; do
+          find "$APP/Watch" -type f | while read -r FILE; do
             if file "$FILE" | grep -q "Mach-O"; then
-              echo "Signing: $FILE"
               codesign \
                 --force \
                 --sign - \
@@ -111,8 +148,6 @@ jobs:
           done
 
           find "$APP/Watch" -type d -name "*.app" | while read -r WATCHAPP; do
-            echo "Signing Watch app: $WATCHAPP"
-
             codesign \
               --force \
               --deep \
@@ -121,7 +156,8 @@ jobs:
               "$WATCHAPP" || true
           done
 
-      - name: Sign Main App Bundle
+      - name: Sign main iOS app
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
@@ -135,30 +171,8 @@ jobs:
             --timestamp=none \
             "$APP" || true
 
-      - name: Verify Watch Bundle
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.locate.outputs.app_path }}"
-
-          echo "=== Embedded Watch contents ==="
-          find "$APP/Watch" -maxdepth 4 -print 2>/dev/null || true
-
-          echo "=== Bundle identifiers ==="
-
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$APP/Info.plist" || true
-
-          find "$APP/Watch" -name Info.plist -print | while read -r PLIST; do
-            echo "--- $PLIST"
-            /usr/libexec/PlistBuddy \
-              -c "Print :CFBundleIdentifier" \
-              "$PLIST" || true
-          done
-
       - name: Create IPA
+        working-directory: ${{ steps.project.outputs.project_root }}
         shell: bash
         run: |
           set -e
@@ -170,18 +184,15 @@ jobs:
 
           cp -R "$APP" Payload/Runner.app
 
-          rm -f openstrap-edge-custom-watch-unsigned.ipa
-
           zip -qry \
-            openstrap-edge-custom-watch-unsigned.ipa \
+            noop-whoop-health-unsigned.ipa \
             Payload
 
-          echo "IPA created:"
-          ls -lh openstrap-edge-custom-watch-unsigned.ipa
+          ls -lh noop-whoop-health-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: openstrap-edge-custom-watch-unsigned-ipa
-          path: openstrap-edge-custom-watch-unsigned.ipa
+          name: noop-whoop-health-unsigned-ipa
+          path: ${{ steps.project.outputs.project_root }}/noop-whoop-health-unsigned.ipa
           if-no-files-found: error
