@@ -1,390 +1,98 @@
-name: Build NOOP iOS IPA
+name: Inspect NOOP Xcode Project
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  inspect:
     runs-on: macos-14
 
     steps:
 
-      # ============================================
-      # 1. Checkout repository
-      # ============================================
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-
-      # ============================================
-      # 2. Extract NOOP source ZIP
-      # ============================================
-      - name: Extract NOOP source
+      - name: Extract source
         shell: bash
         run: |
           set -e
 
           ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
 
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: NOOP ZIP not found"
-            exit 1
-          fi
-
-          echo "Using:"
+          echo "ZIP:"
           echo "$ZIP"
 
+          rm -rf noop-source
           mkdir -p noop-source
 
           unzip -q "$ZIP" -d noop-source
 
-          echo ""
-          echo "Extracted:"
-          find noop-source -maxdepth 2 -type d | head -100
-
-
-      # ============================================
-      # 3. Locate Xcode project
-      # ============================================
-      - name: Locate Xcode project
-        id: project
+      - name: Inspect Xcode files
         shell: bash
         run: |
           set -e
 
-          XCODEPROJ=$(find noop-source \
-            -type d \
-            -name "Strand.xcodeproj" \
-            -print | head -n 1)
+          echo "=========================================="
+          echo "XCODE PROJECTS"
+          echo "=========================================="
 
-          if [ -z "$XCODEPROJ" ]; then
-            echo "ERROR: Strand.xcodeproj not found"
-            find noop-source -maxdepth 4 -print | head -300
-            exit 1
-          fi
-
-          PROJECT_ROOT=$(dirname "$XCODEPROJ")
-          PROJECT_ROOT=$(cd "$PROJECT_ROOT" && pwd)
+          find noop-source \
+            \( -name "*.xcodeproj" -o \
+               -name "*.xcworkspace" -o \
+               -name "project.pbxproj" -o \
+               -name "*.xcconfig" \) \
+            -print
 
           echo ""
-          echo "======================================"
-          echo "NOOP PROJECT"
-          echo "======================================"
-          echo "$PROJECT_ROOT"
+          echo "=========================================="
+          echo "ALL PBXPROJ FILES"
+          echo "=========================================="
 
-          echo "project_root=$PROJECT_ROOT" >> "$GITHUB_OUTPUT"
+          find noop-source \
+            -type f \
+            -name "project.pbxproj" \
+            -print
 
+          echo ""
+          echo "=========================================="
+          echo "XCODEPROJ CONTENT"
+          echo "=========================================="
 
-      # ============================================
-      # 4. Xcode information
-      # ============================================
-      - name: Xcode information
-        run: |
-          xcodebuild -version
-          xcode-select -p
-
-
-      # ============================================
-      # 5. List Xcode schemes
-      # ============================================
-      - name: Show Xcode schemes
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          xcodebuild \
-            -project Strand.xcodeproj \
-            -list
-
-
-      # ============================================
-      # 6. Disable signing
-      # ============================================
-      - name: Configure unsigned build
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          PBX="Strand.xcodeproj/project.pbxproj"
-
-          echo "Disabling automatic signing..."
-
-          sed -i '' \
-            's/DEVELOPMENT_TEAM = [A-Z0-9]*;/DEVELOPMENT_TEAM = "";/g' \
-            "$PBX" || true
-
-          sed -i '' \
-            's/CODE_SIGN_IDENTITY = "[^"]*";/CODE_SIGN_IDENTITY = "";/g' \
-            "$PBX" || true
-
-          sed -i '' \
-            's/PROVISIONING_PROFILE_SPECIFIER = "[^"]*";/PROVISIONING_PROFILE_SPECIFIER = "";/g' \
-            "$PBX" || true
-
-
-      # ============================================
-      # 7. Resolve Swift Packages
-      # ============================================
-      - name: Resolve Swift packages
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          xcodebuild \
-            -project Strand.xcodeproj \
-            -resolvePackageDependencies
-
-
-      # ============================================
-      # 8. Build NOOP iOS app
-      # ============================================
-      - name: Build NOOP
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          rm -rf build
-
-          xcodebuild \
-            -project Strand.xcodeproj \
-            -scheme Strand \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            build
-
-
-      # ============================================
-      # 9. Locate .app
-      # ============================================
-      - name: Locate NOOP.app
-        id: app
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP=$(find build/Build/Products \
+          find noop-source \
             -type d \
-            -name "*.app" \
-            -path "*iphoneos*" \
-            -print | head -n 1)
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: iOS .app not found"
+            -name "*.xcodeproj" | while read -r PROJECT; do
 
             echo ""
-            echo "Build output:"
-            find build -maxdepth 7 -type d | head -500
+            echo "PROJECT: $PROJECT"
 
-            exit 1
-          fi
-
-          echo ""
-          echo "======================================"
-          echo "APP FOUND"
-          echo "======================================"
-          echo "$APP"
-
-          echo "app_path=$APP" >> "$GITHUB_OUTPUT"
-
-
-      # ============================================
-      # 10. Check Watch app
-      # ============================================
-      - name: Check Apple Watch
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.app.outputs.app_path }}"
-
-          echo "======================================"
-          echo "CHECKING APPLE WATCH"
-          echo "======================================"
-
-          if [ -d "$APP/Watch" ]; then
-
-            echo "Watch directory FOUND"
-
-            find "$APP/Watch" \
-              -maxdepth 5 \
-              -type d \
-              -name "*.app" \
+            find "$PROJECT" \
+              -maxdepth 3 \
               -print
 
-          else
-
-            echo "No Watch directory found."
-
-          fi
-
-
-      # ============================================
-      # 11. Ad-hoc sign Watch components
-      # ============================================
-      - name: Sign Watch components
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.app.outputs.app_path }}"
-
-          if [ ! -d "$APP/Watch" ]; then
-            echo "No Watch app - skipping."
-            exit 0
-          fi
-
-          echo "Signing Watch Mach-O files..."
-
-          find "$APP/Watch" -type f | while read -r FILE; do
-
-            if file "$FILE" | grep -q "Mach-O"; then
-
-              echo "Signing:"
-              echo "$FILE"
-
-              codesign \
-                --force \
-                --sign - \
-                --timestamp=none \
-                "$FILE" || true
-
-            fi
-
           done
 
           echo ""
-          echo "Signing Watch bundles..."
+          echo "=========================================="
+          echo "WORKSPACE CONTENT"
+          echo "=========================================="
 
-          find "$APP/Watch" \
+          find noop-source \
             -type d \
-            -name "*.app" | while read -r WATCHAPP; do
+            -name "*.xcworkspace" | while read -r WORKSPACE; do
 
-            echo "Signing:"
-            echo "$WATCHAPP"
+            echo ""
+            echo "WORKSPACE: $WORKSPACE"
 
-            codesign \
-              --force \
-              --deep \
-              --sign - \
-              --timestamp=none \
-              "$WATCHAPP" || true
+            find "$WORKSPACE" \
+              -maxdepth 3 \
+              -print
 
           done
 
-
-      # ============================================
-      # 12. Sign embedded extensions
-      # ============================================
-      - name: Sign app extensions
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.app.outputs.app_path }}"
-
-          if [ -d "$APP/PlugIns" ]; then
-
-            find "$APP/PlugIns" \
-              -type d \
-              -name "*.appex" | while read -r EXT; do
-
-              echo "Signing extension:"
-              echo "$EXT"
-
-              codesign \
-                --force \
-                --deep \
-                --sign - \
-                --timestamp=none \
-                "$EXT" || true
-
-            done
-
-          fi
-
-
-      # ============================================
-      # 13. Verify bundle
-      # ============================================
-      - name: Verify NOOP bundle
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.app.outputs.app_path }}"
-
-          echo "======================================"
-          echo "APP INFO"
-          echo "======================================"
-
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleIdentifier" \
-            "$APP/Info.plist" || true
-
           echo ""
+          echo "=========================================="
+          echo "GIT FILES"
+          echo "=========================================="
 
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleShortVersionString" \
-            "$APP/Info.plist" || true
-
-          echo ""
-
-          /usr/libexec/PlistBuddy \
-            -c "Print :CFBundleVersion" \
-            "$APP/Info.plist" || true
-
-
-      # ============================================
-      # 14. Create IPA
-      # ============================================
-      - name: Create IPA
-        working-directory: ${{ steps.project.outputs.project_root }}
-        shell: bash
-        run: |
-          set -e
-
-          APP="${{ steps.app.outputs.app_path }}"
-
-          rm -rf Payload
-
-          mkdir -p Payload
-
-          cp -R "$APP" Payload/NOOP.app
-
-          rm -f noop-unsigned.ipa
-
-          zip -qry \
-            noop-unsigned.ipa \
-            Payload
-
-          echo ""
-          echo "======================================"
-          echo "IPA CREATED"
-          echo "======================================"
-
-          ls -lh noop-unsigned.ipa
-
-
-      # ============================================
-      # 15. Upload IPA
-      # ============================================
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: noop-unsigned-ipa
-          path: ${{ steps.project.outputs.project_root }}/noop-unsigned.ipa
-          if-no-files-found: error
+          find noop-source/.git \
+            -type f 2>/dev/null | head -100 || true
