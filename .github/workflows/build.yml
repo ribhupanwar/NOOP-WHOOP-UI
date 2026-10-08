@@ -8,6 +8,10 @@ jobs:
     runs-on: macos-15
 
     steps:
+      # ============================================================
+      # XCODE
+      # ============================================================
+
       - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -21,15 +25,31 @@ jobs:
           xcode-select -p
           swift --version
 
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ============================================================
+      # OFFICIAL PROJECT.YML
+      # ============================================================
 
       - name: Download official NOOP project.yml
         shell: bash
         run: |
           set -e
-          curl -L https://raw.githubusercontent.com/ryanbr/noop/main/project.yml -o official-project.yml
+
+          curl -L \
+            https://raw.githubusercontent.com/ryanbr/noop/main/project.yml \
+            -o official-project.yml
+
           ls -lh official-project.yml
+
+      # ============================================================
+      # EXTRACT CUSTOM SOURCE
+      # ============================================================
 
       - name: Extract customized source
         shell: bash
@@ -43,6 +63,9 @@ jobs:
             exit 1
           fi
 
+          echo "Using source ZIP:"
+          echo "$ZIP"
+
           rm -rf noop-source
           mkdir -p noop-source
 
@@ -50,6 +73,10 @@ jobs:
 
           echo "Extracted source:"
           find noop-source -maxdepth 3 -type d | head -100
+
+      # ============================================================
+      # LOCATE SOURCE
+      # ============================================================
 
       - name: Locate NOOP source
         shell: bash
@@ -70,6 +97,10 @@ jobs:
           echo "NOOP source root:"
           echo "$ROOT"
 
+      # ============================================================
+      # INSTALL OFFICIAL PROJECT.YML
+      # ============================================================
+
       - name: Install official project.yml
         shell: bash
         run: |
@@ -80,6 +111,11 @@ jobs:
           cp official-project.yml "$ROOT/project.yml"
 
           ls -lh "$ROOT/project.yml"
+
+      # ============================================================
+      # FIX SWIFT PACKAGE IOS VERSION
+      # XCODE 16.4 COMPATIBILITY
+      # ============================================================
 
       - name: Fix Package.swift iOS compatibility
         shell: bash
@@ -117,6 +153,11 @@ jobs:
           echo ""
           echo "Remaining v18:"
           grep -RIn --include="Package.swift" '\.v18' Packages 2>/dev/null || true
+
+      # ============================================================
+      # FIX LIQUID GLASS SOURCE
+      # XCODE 16.4 / IOS 18 COMPATIBILITY
+      # ============================================================
 
       - name: Fix Liquid Glass source compatibility
         shell: bash
@@ -237,6 +278,10 @@ jobs:
 
           echo "Liquid Glass compatibility file installed."
 
+      # ============================================================
+      # INSTALL XCODEGEN
+      # ============================================================
+
       - name: Install XcodeGen
         shell: bash
         run: |
@@ -245,6 +290,10 @@ jobs:
           brew install xcodegen
 
           xcodegen --version
+
+      # ============================================================
+      # GENERATE XCODE PROJECT
+      # ============================================================
 
       - name: Generate Xcode project
         shell: bash
@@ -266,6 +315,10 @@ jobs:
 
           echo "Xcode project generated successfully."
 
+      # ============================================================
+      # CHECK PROJECT
+      # ============================================================
+
       - name: Check Xcode project
         shell: bash
         run: |
@@ -276,6 +329,10 @@ jobs:
           cd "$ROOT"
 
           xcodebuild -project Strand.xcodeproj -list
+
+      # ============================================================
+      # RESOLVE PACKAGES
+      # ============================================================
 
       - name: Resolve Swift packages
         shell: bash
@@ -289,6 +346,10 @@ jobs:
           xcodebuild \
             -resolvePackageDependencies \
             -project Strand.xcodeproj
+
+      # ============================================================
+      # BUILD
+      # ============================================================
 
       - name: Build NOOPiOS
         shell: bash
@@ -313,6 +374,10 @@ jobs:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             build | tee build.log
+
+      # ============================================================
+      # LOCATE APP
+      # ============================================================
 
       - name: Locate built iOS app
         shell: bash
@@ -339,6 +404,154 @@ jobs:
           echo "Selected app:"
           echo "$APP"
 
+      # ============================================================
+      # PREPARE WATCH COMPLICATION
+      # FIX SIDeloadly MACH-O -18
+      # ============================================================
+
+      - name: Prepare Watch binaries for Sideloadly
+        shell: bash
+        run: |
+          set -e
+
+          ROOT=$(cat source-root.txt)
+
+          cd "$ROOT"
+
+          echo "=========================================="
+          echo "Preparing Watch binaries"
+          echo "=========================================="
+
+          WATCH_ROOT="$APP/Watch/NOOPWatch.app"
+
+          if [ ! -d "$WATCH_ROOT" ]; then
+            echo "No embedded Watch app found."
+            exit 0
+          fi
+
+          echo "Watch app found:"
+          echo "$WATCH_ROOT"
+
+          COMP="$WATCH_ROOT/Plugins/NOOPWatchComplications.appex/NOOPWatchComplications"
+
+          if [ -f "$COMP" ]; then
+
+            echo ""
+            echo "=========================================="
+            echo "WATCH COMPLICATION"
+            echo "=========================================="
+
+            echo "Binary:"
+            echo "$COMP"
+
+            echo ""
+            echo "Before modification:"
+            file "$COMP" || true
+            lipo -info "$COMP" || true
+            codesign -dvv "$COMP" 2>&1 || true
+
+            echo ""
+            echo "Checking architecture..."
+
+            LIPO_INFO=$(lipo -info "$COMP" 2>&1 || true)
+
+            echo "$LIPO_INFO"
+
+            if echo "$LIPO_INFO" | grep -q "Architectures in the fat file"; then
+
+              echo ""
+              echo "Fat Mach-O detected."
+
+              TMP="${COMP}.thin"
+
+              if lipo -thin arm64 "$COMP" -output "$TMP"; then
+                mv "$TMP" "$COMP"
+                echo "Successfully thinned Watch complication to arm64."
+              else
+                echo "arm64 thinning failed."
+                rm -f "$TMP" || true
+              fi
+
+            else
+              echo "Binary is not a fat Mach-O."
+            fi
+
+            echo ""
+            echo "Removing existing signature..."
+
+            codesign --remove-signature "$COMP" 2>/dev/null || true
+
+            echo ""
+            echo "Applying ad-hoc signature..."
+
+            codesign \
+              --force \
+              --sign - \
+              "$COMP"
+
+            echo ""
+            echo "After modification:"
+
+            file "$COMP"
+            lipo -info "$COMP" || true
+
+            echo ""
+            echo "Signature:"
+            codesign -dvv "$COMP" 2>&1 || true
+
+            echo ""
+            echo "Watch complication prepared successfully."
+
+          else
+            echo "NOOPWatchComplications binary not found."
+            echo "Continuing without Watch complication modification."
+          fi
+
+      # ============================================================
+      # VERIFY EMBEDDED APP STRUCTURE
+      # ============================================================
+
+      - name: Verify app bundle before IPA
+        shell: bash
+        run: |
+          set -e
+
+          ROOT=$(cat source-root.txt)
+
+          cd "$ROOT"
+
+          echo "=========================================="
+          echo "FINAL APP STRUCTURE"
+          echo "=========================================="
+
+          echo "Main app:"
+          echo "$APP"
+
+          echo ""
+          echo "Embedded applications:"
+          find "$APP" \
+            -type d \
+            -name "*.app" \
+            -print
+
+          echo ""
+          echo "Embedded extensions:"
+          find "$APP" \
+            -type d \
+            -name "*.appex" \
+            -print
+
+          echo ""
+          echo "Watch complication:"
+          find "$APP" \
+            -type f \
+            -name "NOOPWatchComplications" \
+            -print
+
+      # ============================================================
+      # CREATE UNSIGNED IPA
+      # ============================================================
+
       - name: Create unsigned IPA
         shell: bash
         run: |
@@ -361,7 +574,13 @@ jobs:
             artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa \
             Payload
 
+          echo ""
+          echo "IPA created:"
           ls -lh artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
+
+      # ============================================================
+      # UPLOAD IPA
+      # ============================================================
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
@@ -370,12 +589,20 @@ jobs:
           path: noop-source/**/artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
           if-no-files-found: error
 
+      # ============================================================
+      # UPLOAD GENERATED XCODE PROJECT
+      # ============================================================
+
       - name: Upload generated Xcode project
         uses: actions/upload-artifact@v4
         with:
           name: NOOP-Generated-Xcode-Project
           path: noop-source/**/Strand.xcodeproj
           if-no-files-found: error
+
+      # ============================================================
+      # UPLOAD BUILD LOGS IF FAILED
+      # ============================================================
 
       - name: Upload build logs
         if: failure()
