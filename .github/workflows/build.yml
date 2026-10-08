@@ -8,10 +8,6 @@ jobs:
     runs-on: macos-15
 
     steps:
-
-      # =========================================================
-      # 1. SELECT XCODE
-      # =========================================================
       - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -21,50 +17,20 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          echo "========================================"
-          echo "Xcode"
-          echo "========================================"
           xcodebuild -version
-
-          echo ""
-          echo "Developer directory:"
           xcode-select -p
-
-          echo ""
-          echo "Swift:"
           swift --version
 
-
-      # =========================================================
-      # 2. CHECKOUT
-      # =========================================================
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # =========================================================
-      # 3. DOWNLOAD OFFICIAL PROJECT.YML
-      # =========================================================
       - name: Download official NOOP project.yml
         shell: bash
         run: |
           set -e
-
-          curl -L \
-            https://raw.githubusercontent.com/ryanbr/noop/main/project.yml \
-            -o official-project.yml
-
-          echo "Official project.yml:"
+          curl -L https://raw.githubusercontent.com/ryanbr/noop/main/project.yml -o official-project.yml
           ls -lh official-project.yml
 
-          echo ""
-          wc -l official-project.yml
-
-
-      # =========================================================
-      # 4. EXTRACT CUSTOM SOURCE ZIP
-      # =========================================================
       - name: Extract customized source
         shell: bash
         run: |
@@ -77,22 +43,14 @@ jobs:
             exit 1
           fi
 
-          echo "Using ZIP:"
-          echo "$ZIP"
-
           rm -rf noop-source
           mkdir -p noop-source
 
           unzip -q "$ZIP" -d noop-source
 
-          echo ""
-          echo "Extracted directories:"
+          echo "Extracted source:"
           find noop-source -maxdepth 3 -type d | head -100
 
-
-      # =========================================================
-      # 5. LOCATE NOOP SOURCE
-      # =========================================================
       - name: Locate NOOP source
         shell: bash
         run: |
@@ -107,17 +65,11 @@ jobs:
 
           ROOT=$(dirname "$ROOT")
 
-          echo "========================================"
-          echo "NOOP SOURCE ROOT"
-          echo "========================================"
-          echo "$ROOT"
-
           echo "$ROOT" > source-root.txt
 
+          echo "NOOP source root:"
+          echo "$ROOT"
 
-      # =========================================================
-      # 6. INSTALL OFFICIAL PROJECT.YML
-      # =========================================================
       - name: Install official project.yml
         shell: bash
         run: |
@@ -127,94 +79,45 @@ jobs:
 
           cp official-project.yml "$ROOT/project.yml"
 
-          echo "Installed project.yml:"
           ls -lh "$ROOT/project.yml"
 
-
-      # =========================================================
-      # 7. FIX SWIFT PACKAGE PLATFORM VERSIONS
-      #
-      # Old Package.swift manifests don't understand .v18/.v26.
-      # Use .v16 because the project deployment target is iOS 16.
-      # =========================================================
       - name: Fix Package.swift iOS compatibility
         shell: bash
         run: |
           set -e
 
           ROOT=$(cat source-root.txt)
+
           cd "$ROOT"
 
-          echo "========================================"
-          echo "FIXING PACKAGE.SWIFT PLATFORM VERSIONS"
-          echo "========================================"
-
-          FOUND=0
+          echo "Fixing Swift Package iOS deployment versions..."
 
           while IFS= read -r -d '' file; do
 
             if grep -q '\.iOS(\.v26)' "$file"; then
-              echo ""
-              echo "Fixing iOS v26 -> v16:"
-              echo "$file"
-
               sed -i '' 's/\.iOS(\.v26)/.iOS(.v16)/g' "$file"
-
-              FOUND=1
+              echo "Fixed v26: $file"
             fi
 
             if grep -q '\.iOS(\.v18)' "$file"; then
-              echo ""
-              echo "Fixing iOS v18 -> v16:"
-              echo "$file"
-
               sed -i '' 's/\.iOS(\.v18)/.iOS(.v16)/g' "$file"
-
-              FOUND=1
+              echo "Fixed v18: $file"
             fi
 
-          done < <(
-            find Packages \
-              -name "Package.swift" \
-              -print0
-          )
+          done < <(find Packages -name "Package.swift" -print0)
 
           echo ""
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo "No v26/v18 platform declarations found."
-          else
-            echo "Platform compatibility fixes applied."
-          fi
+          echo "Remaining platform declarations:"
+          grep -RIn --include="Package.swift" '\.iOS(' Packages 2>/dev/null || true
 
           echo ""
-          echo "Current iOS declarations:"
-          grep -RIn \
-            --include="Package.swift" \
-            '\.iOS(' \
-            Packages 2>/dev/null || true
+          echo "Remaining v26:"
+          grep -RIn --include="Package.swift" '\.v26' Packages 2>/dev/null || true
 
           echo ""
-          echo "Checking remaining v26:"
-          grep -RIn \
-            --include="Package.swift" \
-            '\.v26' \
-            Packages 2>/dev/null || true
+          echo "Remaining v18:"
+          grep -RIn --include="Package.swift" '\.v18' Packages 2>/dev/null || true
 
-          echo ""
-          echo "Checking remaining v18:"
-          grep -RIn \
-            --include="Package.swift" \
-            '\.v18' \
-            Packages 2>/dev/null || true
-
-
-      # =========================================================
-      # 8. FIX LIQUID GLASS SOURCE
-      #
-      # Xcode 16.4 / iOS 18 SDK does not know iOS 26
-      # glassEffect / ButtonStyle.glass APIs.
-      # =========================================================
       - name: Fix Liquid Glass source compatibility
         shell: bash
         run: |
@@ -229,183 +132,111 @@ jobs:
             exit 1
           fi
 
-          echo "Replacing:"
-          echo "$FILE"
-
           cat > "$FILE" <<'SWIFT'
-import SwiftUI
+          import SwiftUI
 
-public struct NoopLiquidGlassSearchField: View {
-    @Binding private var text: String
+          public struct NoopLiquidGlassSearchField: View {
+              @Binding private var text: String
+              private let prompt: String
+              private let accessibilityPrompt: String
+              private var externalFocus: FocusState<Bool>.Binding?
+              @FocusState private var internalFocus: Bool
 
-    private let prompt: String
-    private let accessibilityPrompt: String
+              public init(
+                  text: Binding<String>,
+                  prompt: String,
+                  accessibilityLabel: String? = nil,
+                  isFocused: FocusState<Bool>.Binding? = nil
+              ) {
+                  self._text = text
+                  self.prompt = prompt
+                  self.accessibilityPrompt = accessibilityLabel ?? prompt
+                  self.externalFocus = isFocused
+              }
 
-    private var externalFocus: FocusState<Bool>.Binding?
+              public var body: some View {
+                  HStack(spacing: NoopMetrics.space2) {
+                      Image(systemName: "magnifyingglass")
+                          .font(.system(size: 16, weight: .semibold))
+                          .foregroundStyle(StrandPalette.textSecondary)
+                          .accessibilityHidden(true)
 
-    @FocusState private var internalFocus: Bool
+                      TextField(prompt, text: $text)
+                          .textFieldStyle(.plain)
+                          .font(StrandFont.body)
+                          .foregroundStyle(StrandPalette.textPrimary)
+                          .focused(focusBinding)
+                          .submitLabel(.search)
+                          #if os(iOS)
+                          .autocorrectionDisabled()
+                          .textInputAutocapitalization(.never)
+                          #endif
 
-    public init(
-        text: Binding<String>,
-        prompt: String,
-        accessibilityLabel: String? = nil,
-        isFocused: FocusState<Bool>.Binding? = nil
-    ) {
-        self._text = text
-        self.prompt = prompt
-        self.accessibilityPrompt = accessibilityLabel ?? prompt
-        self.externalFocus = isFocused
-    }
+                      if !text.isEmpty {
+                          Button {
+                              text = ""
+                          } label: {
+                              Image(systemName: "xmark.circle.fill")
+                                  .font(.system(size: 16, weight: .semibold))
+                                  .foregroundStyle(StrandPalette.textTertiary)
+                                  .frame(width: 28, height: 28)
+                                  .contentShape(Circle())
+                          }
+                          .buttonStyle(.plain)
+                          .accessibilityLabel(Text("Clear search"))
+                      }
+                  }
+                  .padding(.horizontal, NoopMetrics.space4)
+                  .padding(.vertical, NoopMetrics.space3)
+                  .nativeLiquidGlassSearchChrome()
+                  .accessibilityElement(children: .contain)
+                  .accessibilityLabel(Text(accessibilityPrompt))
+              }
 
-    public var body: some View {
-        HStack(spacing: NoopMetrics.space2) {
+              private var focusBinding: FocusState<Bool>.Binding {
+                  externalFocus ?? $internalFocus
+              }
+          }
 
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(StrandPalette.textSecondary)
-                .accessibilityHidden(true)
+          public extension View {
+              @ViewBuilder
+              func nativeLiquidGlassSearchChrome() -> some View {
+                  self.background(
+                      NoopPanelSurface(
+                          cornerRadius: NoopVisualStyle.pillRadius,
+                          elevated: false
+                      )
+                  )
+              }
 
-            TextField(
-                prompt,
-                text: $text
-            )
-            .textFieldStyle(.plain)
-            .font(StrandFont.body)
-            .foregroundStyle(StrandPalette.textPrimary)
-            .focused(focusBinding)
-            .submitLabel(.search)
-            #if os(iOS)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            #endif
+              @ViewBuilder
+              func nativeLiquidGlassButtonChrome<Fallback: View>(
+                  controlSize: ControlSize = .small,
+                  capsule: Bool = false,
+                  @ViewBuilder fallback: () -> Fallback
+              ) -> some View {
+                  fallback()
+              }
 
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(
-                            .system(
-                                size: 16,
-                                weight: .semibold
-                            )
-                        )
-                        .foregroundStyle(
-                            StrandPalette.textTertiary
-                        )
-                        .frame(
-                            width: 28,
-                            height: 28
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(
-                    Text("Clear search")
-                )
-            }
-        }
-        .padding(
-            .horizontal,
-            NoopMetrics.space4
-        )
-        .padding(
-            .vertical,
-            NoopMetrics.space3
-        )
-        .nativeLiquidGlassSearchChrome()
-        .accessibilityElement(
-            children: .contain
-        )
-        .accessibilityLabel(
-            Text(accessibilityPrompt)
-        )
-    }
+              @ViewBuilder
+              func nativeLiquidGlassCircleFinish() -> some View {
+                  self
+              }
 
-    private var focusBinding:
-        FocusState<Bool>.Binding {
-        externalFocus ?? $internalFocus
-    }
-}
+              @ViewBuilder
+              private func noopStandardSearchChrome() -> some View {
+                  self.background(
+                      NoopPanelSurface(
+                          cornerRadius: NoopVisualStyle.pillRadius,
+                          elevated: false
+                      )
+                  )
+              }
+          }
+          SWIFT
 
-
-// MARK: - Compatibility Modifiers
-
-public extension View {
-
-    @ViewBuilder
-    func nativeLiquidGlassSearchChrome() -> some View {
-        self.background(
-            NoopPanelSurface(
-                cornerRadius:
-                    NoopVisualStyle.pillRadius,
-                elevated: false
-            )
-        )
-    }
-
-    @ViewBuilder
-    func nativeLiquidGlassButtonChrome<
-        Fallback: View
-    >(
-        controlSize: ControlSize = .small,
-        capsule: Bool = false,
-        @ViewBuilder fallback:
-            () -> Fallback
-    ) -> some View {
-        fallback()
-    }
-
-    @ViewBuilder
-    func nativeLiquidGlassCircleFinish() -> some View {
-        self
-    }
-
-    @ViewBuilder
-    private func noopStandardSearchChrome() -> some View {
-        self.background(
-            NoopPanelSurface(
-                cornerRadius:
-                    NoopVisualStyle.pillRadius,
-                elevated: false
-            )
-        )
-    }
-}
-SWIFT
-
-          echo ""
           echo "Liquid Glass compatibility file installed."
 
-
-      # =========================================================
-      # 9. CHECK FOR OTHER UNSUPPORTED GLASS APIS
-      # =========================================================
-      - name: Scan for unsupported Liquid Glass APIs
-        shell: bash
-        run: |
-          set -e
-
-          ROOT=$(cat source-root.txt)
-
-          echo "========================================"
-          echo "SCANNING FOR iOS 26 GLASS APIs"
-          echo "========================================"
-
-          grep -RIn \
-            -E \
-            'glassEffect|\.buttonStyle\(\.glass\)|\.glass\b' \
-            "$ROOT/Packages" \
-            --include="*.swift" \
-            2>/dev/null || true
-
-          echo ""
-          echo "Scan complete."
-
-
-      # =========================================================
-      # 10. INSTALL XCODEGEN
-      # =========================================================
       - name: Install XcodeGen
         shell: bash
         run: |
@@ -413,14 +244,8 @@ SWIFT
 
           brew install xcodegen
 
-          echo ""
-          echo "XcodeGen:"
           xcodegen --version
 
-
-      # =========================================================
-      # 11. GENERATE XCODE PROJECT
-      # =========================================================
       - name: Generate Xcode project
         shell: bash
         run: |
@@ -432,28 +257,15 @@ SWIFT
 
           rm -rf Strand.xcodeproj
 
-          echo "========================================"
-          echo "GENERATING XCODE PROJECT"
-          echo "========================================"
-
           xcodegen generate
-
-          echo ""
-          echo "Generated project:"
-          find Strand.xcodeproj -maxdepth 2 -print
 
           if [ ! -f "Strand.xcodeproj/project.pbxproj" ]; then
             echo "::error::project.pbxproj was not generated."
             exit 1
           fi
 
-          echo ""
           echo "Xcode project generated successfully."
 
-
-      # =========================================================
-      # 12. CHECK XCODE PROJECT
-      # =========================================================
       - name: Check Xcode project
         shell: bash
         run: |
@@ -463,18 +275,8 @@ SWIFT
 
           cd "$ROOT"
 
-          echo "========================================"
-          echo "CHECKING XCODE PROJECT"
-          echo "========================================"
+          xcodebuild -project Strand.xcodeproj -list
 
-          xcodebuild \
-            -project Strand.xcodeproj \
-            -list
-
-
-      # =========================================================
-      # 13. RESOLVE SWIFT PACKAGES
-      # =========================================================
       - name: Resolve Swift packages
         shell: bash
         run: |
@@ -484,21 +286,10 @@ SWIFT
 
           cd "$ROOT"
 
-          echo "========================================"
-          echo "RESOLVING SWIFT PACKAGES"
-          echo "========================================"
-
           xcodebuild \
             -resolvePackageDependencies \
             -project Strand.xcodeproj
 
-          echo ""
-          echo "Package resolution completed."
-
-
-      # =========================================================
-      # 14. BUILD NOOP IOS
-      # =========================================================
       - name: Build NOOPiOS
         shell: bash
         run: |
@@ -509,10 +300,6 @@ SWIFT
           cd "$ROOT"
 
           rm -rf build
-
-          echo "========================================"
-          echo "BUILDING NOOPiOS"
-          echo "========================================"
 
           xcodebuild \
             -project Strand.xcodeproj \
@@ -525,18 +312,8 @@ SWIFT
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            build \
-            | tee build.log
+            build | tee build.log
 
-          echo ""
-          echo "========================================"
-          echo "BUILD COMPLETED"
-          echo "========================================"
-
-
-      # =========================================================
-      # 15. LOCATE APP
-      # =========================================================
       - name: Locate built iOS app
         shell: bash
         run: |
@@ -545,16 +322,6 @@ SWIFT
           ROOT=$(cat source-root.txt)
 
           cd "$ROOT"
-
-          echo "========================================"
-          echo "SEARCHING FOR APP"
-          echo "========================================"
-
-          find build \
-            -type d \
-            -path "*/Build/Products/*-iphoneos/*.app" \
-            -not -path "*/PlugIns/*" \
-            -print
 
           APP=$(find build \
             -type d \
@@ -567,17 +334,12 @@ SWIFT
             exit 1
           fi
 
-          echo ""
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
           echo "Selected app:"
           echo "$APP"
 
-          echo "APP=$APP" >> "$GITHUB_ENV"
-
-
-      # =========================================================
-      # 16. CREATE UNSIGNED IPA
-      # =========================================================
-      - name: Create IPA
+      - name: Create unsigned IPA
         shell: bash
         run: |
           set -e
@@ -587,38 +349,20 @@ SWIFT
           cd "$ROOT"
 
           rm -rf Payload
-          mkdir -p Payload
 
-          echo "Copying app:"
-          echo "$APP"
+          mkdir -p Payload
+          mkdir -p artifacts
 
           cp -R "$APP" Payload/
 
-          echo ""
-          echo "Payload:"
-          find Payload -maxdepth 3 -type d | head -100
-
-          mkdir -p artifacts
-
-          rm -f \
-            artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
+          rm -f artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
 
           zip -qry \
             artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa \
             Payload
 
-          echo ""
-          echo "========================================"
-          echo "IPA CREATED"
-          echo "========================================"
+          ls -lh artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
 
-          ls -lh \
-            artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
-
-
-      # =========================================================
-      # 17. UPLOAD IPA
-      # =========================================================
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -626,10 +370,6 @@ SWIFT
           path: noop-source/**/artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
           if-no-files-found: error
 
-
-      # =========================================================
-      # 18. UPLOAD XCODE PROJECT
-      # =========================================================
       - name: Upload generated Xcode project
         uses: actions/upload-artifact@v4
         with:
@@ -637,10 +377,6 @@ SWIFT
           path: noop-source/**/Strand.xcodeproj
           if-no-files-found: error
 
-
-      # =========================================================
-      # 19. UPLOAD DEBUG LOGS ON FAILURE
-      # =========================================================
       - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
