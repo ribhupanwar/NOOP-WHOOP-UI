@@ -9,9 +9,9 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 0. Select compatible Xcode
-      # --------------------------------------------------
+      # ---------------------------------------------------------
+      # 1. Select Xcode
+      # ---------------------------------------------------------
       - name: Select Xcode 16.4
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -22,22 +22,30 @@ jobs:
         run: |
           set -e
 
-          echo "Xcode version:"
+          echo "========================================"
+          echo "Xcode version"
+          echo "========================================"
           xcodebuild -version
 
           echo ""
           echo "Developer directory:"
           xcode-select -p
 
-      # --------------------------------------------------
-      # 1. Checkout
-      # --------------------------------------------------
+          echo ""
+          echo "Swift version:"
+          swift --version
+
+
+      # ---------------------------------------------------------
+      # 2. Checkout repository
+      # ---------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Download official NOOP project configuration
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 3. Download official NOOP project.yml
+      # ---------------------------------------------------------
       - name: Download official NOOP project.yml
         shell: bash
         run: |
@@ -47,12 +55,17 @@ jobs:
             https://raw.githubusercontent.com/ryanbr/noop/main/project.yml \
             -o official-project.yml
 
-          echo "Official project.yml downloaded"
+          echo "Official project.yml downloaded:"
+          ls -lh official-project.yml
+
+          echo ""
+          echo "Lines:"
           wc -l official-project.yml
 
-      # --------------------------------------------------
-      # 3. Extract customized source
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 4. Find source ZIP
+      # ---------------------------------------------------------
       - name: Extract customized source
         shell: bash
         run: |
@@ -61,11 +74,11 @@ jobs:
           ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
 
           if [ -z "$ZIP" ]; then
-            echo "::error::Source ZIP not found"
+            echo "::error::Source ZIP not found in repository root."
             exit 1
           fi
 
-          echo "Using source:"
+          echo "Using source ZIP:"
           echo "$ZIP"
 
           rm -rf noop-source
@@ -77,9 +90,10 @@ jobs:
           echo "Extracted directories:"
           find noop-source -maxdepth 3 -type d | head -100
 
-      # --------------------------------------------------
-      # 4. Locate actual NOOP source directory
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 5. Locate NOOP source root
+      # ---------------------------------------------------------
       - name: Locate NOOP source
         shell: bash
         run: |
@@ -88,20 +102,23 @@ jobs:
           ROOT=$(find noop-source -type d -name "StrandiOS" | head -n 1)
 
           if [ -z "$ROOT" ]; then
-            echo "::error::StrandiOS folder not found"
+            echo "::error::StrandiOS folder not found."
             exit 1
           fi
 
           ROOT=$(dirname "$ROOT")
 
+          echo "========================================"
           echo "NOOP source root:"
           echo "$ROOT"
+          echo "========================================"
 
           echo "$ROOT" > source-root.txt
 
-      # --------------------------------------------------
-      # 5. Install official project.yml
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 6. Install official project.yml
+      # ---------------------------------------------------------
       - name: Install official project.yml
         shell: bash
         run: |
@@ -114,9 +131,266 @@ jobs:
           echo "Installed official project.yml:"
           ls -lh "$ROOT/project.yml"
 
-      # --------------------------------------------------
-      # 6. Install XcodeGen
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 7. Fix iOS 26 Package.swift declarations
+      #
+      # Xcode 16.4 understands up to iOS 18 SDK.
+      # .iOS(.v26) causes:
+      # "reference to member 'v26' cannot be resolved"
+      # ---------------------------------------------------------
+      - name: Fix Package.swift iOS 26 compatibility
+        shell: bash
+        run: |
+          set -e
+
+          ROOT=$(cat source-root.txt)
+          cd "$ROOT"
+
+          echo "========================================"
+          echo "Searching Package.swift files for .iOS(.v26)"
+          echo "========================================"
+
+          FOUND=0
+
+          while IFS= read -r -d '' file; do
+            if grep -q '\.iOS(\.v26)' "$file"; then
+              echo "Fixing: $file"
+
+              sed -i '' 's/\.iOS(\.v26)/.iOS(.v18)/g' "$file"
+
+              FOUND=1
+            fi
+          done < <(
+            find Packages \
+              -name "Package.swift" \
+              -print0
+          )
+
+          echo ""
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No .iOS(.v26) references found."
+          else
+            echo "All .iOS(.v26) references changed to .iOS(.v18)."
+          fi
+
+          echo ""
+          echo "Remaining .v26 references:"
+          grep -RIn \
+            --include="Package.swift" \
+            '\.v26' \
+            Packages 2>/dev/null || true
+
+
+      # ---------------------------------------------------------
+      # 8. Remove unsupported Liquid Glass APIs
+      #
+      # Xcode 16.4 / iOS 18.5 SDK does not expose:
+      # - glassEffect
+      # - GlassEffect
+      # - ButtonStyle.glass
+      #
+      # Replace NoopLiquidGlassSearchField.swift with a
+      # compile-safe fallback implementation.
+      # ---------------------------------------------------------
+      - name: Fix Liquid Glass source compatibility
+        shell: bash
+        run: |
+          set -e
+
+          ROOT=$(cat source-root.txt)
+
+          FILE="$ROOT/Packages/StrandDesign/Sources/StrandDesign/NoopLiquidGlassSearchField.swift"
+
+          if [ ! -f "$FILE" ]; then
+            echo "::error::NoopLiquidGlassSearchField.swift not found."
+            exit 1
+          fi
+
+          echo "Replacing:"
+          echo "$FILE"
+
+          cat > "$FILE" <<'SWIFT'
+          import SwiftUI
+
+          // MARK: - Compatible Liquid Glass Search Field
+          //
+          // Xcode 16.4 / iOS 18-compatible implementation.
+          //
+          // The original source used iOS 26-only APIs such as:
+          //     glassEffect(...)
+          //     ButtonStyle.glass
+          //
+          // Those APIs are not available in the Xcode 16.4 SDK.
+          // This implementation keeps the same UI structure, accessibility,
+          // focus handling and search behavior while using the existing
+          // standard NOOP surface.
+
+          public struct NoopLiquidGlassSearchField: View {
+              @Binding private var text: String
+
+              private let prompt: String
+              private let accessibilityPrompt: String
+
+              private var externalFocus: FocusState<Bool>.Binding?
+
+              @FocusState private var internalFocus: Bool
+
+              public init(
+                  text: Binding<String>,
+                  prompt: String,
+                  accessibilityLabel: String? = nil,
+                  isFocused: FocusState<Bool>.Binding? = nil
+              ) {
+                  self._text = text
+                  self.prompt = prompt
+                  self.accessibilityPrompt = accessibilityLabel ?? prompt
+                  self.externalFocus = isFocused
+              }
+
+              public var body: some View {
+                  HStack(spacing: NoopMetrics.space2) {
+
+                      Image(systemName: "magnifyingglass")
+                          .font(.system(size: 16, weight: .semibold))
+                          .foregroundStyle(StrandPalette.textSecondary)
+                          .accessibilityHidden(true)
+
+                      TextField(
+                          prompt,
+                          text: $text
+                      )
+                      .textFieldStyle(.plain)
+                      .font(StrandFont.body)
+                      .foregroundStyle(StrandPalette.textPrimary)
+                      .focused(focusBinding)
+                      .submitLabel(.search)
+
+                      #if os(iOS)
+                      .autocorrectionDisabled()
+                      .textInputAutocapitalization(.never)
+                      #endif
+
+                      if !text.isEmpty {
+                          Button {
+                              text = ""
+                          } label: {
+                              Image(systemName: "xmark.circle.fill")
+                                  .font(
+                                      .system(
+                                          size: 16,
+                                          weight: .semibold
+                                      )
+                                  )
+                                  .foregroundStyle(
+                                      StrandPalette.textTertiary
+                                  )
+                                  .frame(
+                                      width: 28,
+                                      height: 28
+                                  )
+                                  .contentShape(Circle())
+                          }
+                          .buttonStyle(.plain)
+                          .accessibilityLabel(
+                              Text("Clear search")
+                          )
+                      }
+                  }
+                  .padding(
+                      .horizontal,
+                      NoopMetrics.space4
+                  )
+                  .padding(
+                      .vertical,
+                      NoopMetrics.space3
+                  )
+                  .nativeLiquidGlassSearchChrome()
+                  .accessibilityElement(
+                      children: .contain
+                  )
+                  .accessibilityLabel(
+                      Text(accessibilityPrompt)
+                  )
+              }
+
+              private var focusBinding:
+                  FocusState<Bool>.Binding {
+                  externalFocus ?? $internalFocus
+              }
+          }
+
+          // MARK: - Compatibility View Modifiers
+
+          public extension View {
+
+              /// Search field surface.
+              ///
+              /// Uses the standard NOOP surface when building with
+              /// Xcode 16.4 / iOS 18 SDK.
+              @ViewBuilder
+              func nativeLiquidGlassSearchChrome() -> some View {
+                  self.background(
+                      NoopPanelSurface(
+                          cornerRadius:
+                              NoopVisualStyle.pillRadius,
+                          elevated: false
+                      )
+                  )
+              }
+
+              /// Liquid Glass button compatibility wrapper.
+              ///
+              /// Current CI SDK does not expose ButtonStyle.glass,
+              /// so use the supplied fallback.
+              @ViewBuilder
+              func nativeLiquidGlassButtonChrome<
+                  Fallback: View
+              >(
+                  controlSize: ControlSize = .small,
+                  capsule: Bool = false,
+                  @ViewBuilder fallback:
+                      () -> Fallback
+              ) -> some View {
+                  fallback()
+              }
+
+              /// Liquid Glass circular finish compatibility wrapper.
+              ///
+              /// No-op on Xcode 16.4 / iOS 18 SDK.
+              @ViewBuilder
+              func nativeLiquidGlassCircleFinish() -> some View {
+                  self
+              }
+
+              @ViewBuilder
+              private func noopStandardSearchChrome() -> some View {
+                  self.background(
+                      NoopPanelSurface(
+                          cornerRadius:
+                              NoopVisualStyle.pillRadius,
+                          elevated: false
+                      )
+                  )
+              }
+          }
+          SWIFT
+
+          echo ""
+          echo "Liquid Glass compatibility source installed."
+
+          echo ""
+          echo "Checking for remaining unsupported APIs:"
+          grep -RIn \
+            -E 'glassEffect|\.buttonStyle\(\.glass\)' \
+            "$ROOT/Packages/StrandDesign/Sources/StrandDesign" \
+            2>/dev/null || true
+
+
+      # ---------------------------------------------------------
+      # 9. Install XcodeGen
+      # ---------------------------------------------------------
       - name: Install XcodeGen
         shell: bash
         run: |
@@ -128,9 +402,10 @@ jobs:
           echo "XcodeGen version:"
           xcodegen --version
 
-      # --------------------------------------------------
-      # 7. Generate Strand.xcodeproj
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 10. Generate Xcode project
+      # ---------------------------------------------------------
       - name: Generate Xcode project
         shell: bash
         run: |
@@ -142,6 +417,8 @@ jobs:
 
           rm -rf Strand.xcodeproj
 
+          echo "Generating Xcode project..."
+
           xcodegen generate
 
           echo ""
@@ -149,16 +426,17 @@ jobs:
           find Strand.xcodeproj -maxdepth 2 -print
 
           if [ ! -f "Strand.xcodeproj/project.pbxproj" ]; then
-            echo "::error::XcodeGen did not create project.pbxproj"
+            echo "::error::XcodeGen did not create project.pbxproj."
             exit 1
           fi
 
           echo ""
           echo "project.pbxproj successfully generated."
 
-      # --------------------------------------------------
-      # 8. Check generated Xcode project
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 11. Check project
+      # ---------------------------------------------------------
       - name: Check Xcode project
         shell: bash
         run: |
@@ -174,10 +452,11 @@ jobs:
             -project Strand.xcodeproj \
             -list
 
-      # --------------------------------------------------
-      # 9. Build unsigned iOS app
-      # --------------------------------------------------
-      - name: Build NOOPiOS
+
+      # ---------------------------------------------------------
+      # 12. Resolve Swift packages
+      # ---------------------------------------------------------
+      - name: Resolve Swift packages
         shell: bash
         run: |
           set -e
@@ -186,9 +465,33 @@ jobs:
 
           cd "$ROOT"
 
+          echo "Resolving Swift packages..."
+
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Strand.xcodeproj
+
+          echo ""
+          echo "Swift package resolution completed."
+
+
+      # ---------------------------------------------------------
+      # 13. Build unsigned NOOP iOS
+      # ---------------------------------------------------------
+      - name: Build NOOPiOS
+        shell: bash
+        run: |
+          set -o pipefail
+
+          ROOT=$(cat source-root.txt)
+
+          cd "$ROOT"
+
           rm -rf build
 
-          echo "Starting unsigned iOS build..."
+          echo "========================================"
+          echo "Starting unsigned iOS build"
+          echo "========================================"
 
           xcodebuild \
             -project Strand.xcodeproj \
@@ -201,11 +504,18 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
-            build
+            build \
+            | tee build.log
 
-      # --------------------------------------------------
-      # 10. Locate built iOS app
-      # --------------------------------------------------
+          echo ""
+          echo "========================================"
+          echo "Build completed successfully"
+          echo "========================================"
+
+
+      # ---------------------------------------------------------
+      # 14. Locate built iOS app
+      # ---------------------------------------------------------
       - name: Locate built iOS app
         shell: bash
         run: |
@@ -215,11 +525,12 @@ jobs:
 
           cd "$ROOT"
 
-          echo "Searching for iOS app..."
+          echo "Searching for iOS .app..."
 
           find build \
             -type d \
-            \( -name "*.app" -o -name "*.appex" \) \
+            -path "*/Build/Products/*-iphoneos/*.app" \
+            -not -path "*/PlugIns/*" \
             -print
 
           APP=$(find build \
@@ -229,19 +540,20 @@ jobs:
             | head -n 1)
 
           if [ -z "$APP" ]; then
-            echo "::error::iOS .app not found"
+            echo "::error::iOS .app not found."
             exit 1
           fi
-
-          echo "APP=$APP" >> "$GITHUB_ENV"
 
           echo ""
           echo "Selected app:"
           echo "$APP"
 
-      # --------------------------------------------------
-      # 11. Create unsigned IPA
-      # --------------------------------------------------
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+
+      # ---------------------------------------------------------
+      # 15. Create unsigned IPA
+      # ---------------------------------------------------------
       - name: Create IPA
         shell: bash
         run: |
@@ -253,6 +565,8 @@ jobs:
 
           rm -rf Payload
           mkdir -p Payload
+
+          echo "Copying app into Payload..."
 
           cp -R "$APP" Payload/
 
@@ -267,12 +581,17 @@ jobs:
             Payload
 
           echo ""
+          echo "========================================"
           echo "IPA created:"
-          ls -lh artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
+          echo "========================================"
 
-      # --------------------------------------------------
-      # 12. Upload IPA
-      # --------------------------------------------------
+          ls -lh \
+            artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
+
+
+      # ---------------------------------------------------------
+      # 16. Upload IPA
+      # ---------------------------------------------------------
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
@@ -280,12 +599,27 @@ jobs:
           path: noop-source/**/artifacts/NOOP-WHOOP-Custom-iOS-Unsigned.ipa
           if-no-files-found: error
 
-      # --------------------------------------------------
-      # 13. Upload generated Xcode project
-      # --------------------------------------------------
+
+      # ---------------------------------------------------------
+      # 17. Upload generated Xcode project
+      # ---------------------------------------------------------
       - name: Upload generated Xcode project
         uses: actions/upload-artifact@v4
         with:
           name: NOOP-Generated-Xcode-Project
           path: noop-source/**/Strand.xcodeproj
           if-no-files-found: error
+
+
+      # ---------------------------------------------------------
+      # 18. Upload build log if build fails
+      # ---------------------------------------------------------
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOOP-Build-Debug-Logs
+          path: |
+            noop-source/**/build.log
+            noop-source/**/project.yml
+          if-no-files-found: ignore
